@@ -1,3 +1,5 @@
+;Week 1
+
 data	segment	para public 'data'
 message	db	'I have $'
 message2 db '50!$'
