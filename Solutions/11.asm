@@ -4,29 +4,46 @@ STACK 32
 
 .data
 
-handle dw 0
-subfile db "sub.txt", 0
-sumfile db "sum.txt", 0
-point_subfile dd subfile
-point_sumfile dd sumfile
-a db 0
-b db 0
-result db "00"
-point_result dd result
+handle DW 0
+subfile DB "sub.txt", 0
+sumfile DB "sum.txt", 0
+point_subfile DD subfile
+point_sumfile DD sumfile
+a DB 0
+b DB 0
+result DB "00"
+point_result DD result
 
 .code
 	ASSUME DS:@data
 	
+print_res_file MACRO file
+	;create file
+	MOV AH, 3Ch
+	LDS DX, file
+	INT 21h
+	
+	;open file
+	MOV AH, 3Dh
+	MOV AL, 1
+	INT 21h
+	MOV handle, AX
+	
+	;write
+	MOV AH, 40h
+	MOV BX, handle
+	LDS DX, point_result
+	INT 21h
+	
+	;close file
+	MOV AH, 3Eh
+	INT 21h
+ENDM
+	
 main:
 	MOV AX, @data
 	MOV DS, AX
-	XOR AX, AX
 	XOR CX, CX
-	
-	;create subfile
-	MOV AH, 3Ch
-	LDS DX, point_subfile
-	INT 21h
 	
 	;A and B
 	MOV AH, 01h
@@ -35,13 +52,9 @@ main:
 	INT 21h
 	MOV b, AL
 	
-	;open subfile
-	MOV AH, 3Dh
-	MOV AL, 1
-	INT 21h
-	MOV handle, AX
-	
+	;bytes count
 	MOV CX, 1
+	
 	;check negative
 	MOV AH, a
 	CMP AH, b
@@ -61,28 +74,15 @@ negative:
 	INC CX
 	
 write_sub:
-	MOV AH, 40h
-	MOV BX, handle
-	LDS DX, point_result
-	INT 21h
+	print_res_file point_subfile
 	
-	;create sumfile
-	MOV AH, 3Ch
-	LDS DX, point_sumfile
-	INT 21h
-	
-	;open sumfile
-	MOV AH, 3Dh
-	MOV AL, 1
-	INT 21h
-	MOV handle, AX
-	
+	;bytes count
 	MOV CX, 1
+
 	MOV AH, a
 	SUB AH, '0'
-	MOV AL, b
-	SUB AL, '0'
-	ADD AH, AL
+	ADD AH, b
+	SUB AH, '0'
 	;check double digit
 	CMP AH, 10
 	JL digit
@@ -100,10 +100,7 @@ digit:
 	ADD result, AH
 	
 write_sum:
-	MOV AH, 40h
-	MOV BX, handle
-	LDS DX, point_result
-	INT 21h
+	print_res_file point_sumfile
 	
 exit:
 	MOV	AX, 4C00h
