@@ -5,19 +5,15 @@ STACK 128
 .data
 paging EQU 16
 ;text DB "I have something to tell you! Today I am feeling depressed!$", 0
-text DB "World "
+text DB "blEh "
 text_ptr DD text
 str_len EQU text_ptr - text
 handle DW 0
 helper_file DB "helper.txt", 0
 helper_file_ptr DD helper_file
 
-
 word_start DW 0
 word_size DW 0
-
-current_word_start DW 0
-current_word_size DW 0
 
 token_start_ptr DW ?
 token_read_count DW ?
@@ -96,19 +92,8 @@ close_file MACRO
 	INT 21h
 ENDM
 
-; get_next_word MACRO prefix_start, prefix_end
-	; PUSHA
-
-	; ;read file
-	; MOV AH, 3Fh
-	; MOV CX, paging
-	; MOV BX, handle
-	; INT 21h
-	
-	; POPA
-; ENDM 
-
 get_nth_token MACRO n
+	PUSHA
 	open_file helper_file_ptr, 0 ; changes AX and DX
 	PUSH n
 	
@@ -141,25 +126,24 @@ count_nl:
 	JNE count_nl
 	
 	;DX == 0 => next characters until space are the token
-	DEC CX
 	MOV token_read_count, CX
-	INC DI
-	CMP CX, 0 ; we ran out of buffer bytes
-	JNE bytes_remain
+	; CMP CX, 1 ; we ran out of buffer bytes
+	; JNE bytes_remain
 	
-	MOV AH, 3Fh
-	MOV CX, paging
-	LEA DX, buffer
-	INT 21h
-	MOV DI, DX
+	; MOV AH, 3Fh
+	; MOV CX, paging
+	; LEA DX, buffer
+	; INT 21h
+	; MOV DI, DX
 	
-	MOV token_read_count, AX
+	; MOV token_read_count, AX
 	
-bytes_remain:
+;bytes_remain:
 	MOV token_start_ptr, DI
 	
 	JMP token_found
 no_nl:
+	PUSH DX
 	JMP loop_search_token
 	
 first_token:
@@ -172,7 +156,7 @@ token_not_found:
 	MOV token_read_count, DX
 
 token_found:
-	;close_file
+	POPA
 ENDM
 
 ; word end i is after the last character
@@ -184,72 +168,96 @@ tokenize MACRO string, word_start_i, word_end_i
 	LEA SI, string[SI] ; maybe not needed? - current char pointer
 	
 	MOV word_start, SI ;start ptr
-	;MOV current_word_start, SI
 	
 	MOV DX, word_end_i
 	SUB DX, word_start_i
 	
 	MOV word_size, DX
-	;MOV current_word_size, DX
-	XOR CX, CX
+	;XOR CX, CX
+	MOV CX, 2
 
 search_word:
+	MOV SI, word_start ;start ptr
+	MOV DX, word_size
+	CMP CX, 0
+	JNE not_first
+	close_file
+
+not_first:
 	get_nth_token CX
 	PUSH CX
 	CMP token_read_count, 0
 	JE not_found
 	
-	; here we have a token with start token_start_ptr and currently read token_read_count bytes from file
+	; here we have a token with start token_start_ptr and currently read token_read_count bytes from file (includeing token start)
 	CLD
 	MOV DI, token_start_ptr
 	MOV CX, token_read_count
-	CMPSB
-	JNE currently_not_found
 	
+	;CX = min(DX, token read count)
+	CMP CX, DX
+	JLE smaller
+	MOV CX, DX
 	
+smaller:
+	REPE CMPSB
+	JNE end_comparison
+	CMP DX, token_read_count ; DX = current word size
+	JL end_comparison_success
+	JE end_comparison_success_equal
 	
-	close_file
-	POP CX
-	JMP tokenize_done
+	SUB DX, token_read_count
+	MOV token_read_count, DX
+	MOV AH, 3Fh
+	MOV CX, DX
+	MOV BX, handle
+	LEA DX, buffer
+	INT 21h
+	MOV DI, DX
+	JMP smaller
 	
-currently_not_found:
-	close_file
+end_comparison_success_equal:
+	PUSH DX
+	
+	MOV AH, 3Fh
+	MOV CX, 1
+	MOV BX, handle
+	LEA DX, buffer
+	INT 21h
+	MOV DI, DX
+	
+	POP DX
+end_comparison_success:
+	INC DI
+end_comparison:
 	POP CX
 	INC CX
-	JMP search_word
 	
+	DEC DI
+	MOV AL, [DI]
+	CMP AL, ' '
+	JNE search_word
+	CMP DX, token_read_count
+	JG search_word
 	
-	; ;check if insufficient characters
-	; CMP AX, current_word_size
-	; JL not_found
+	; token found
+	INC DI
+	SUB token_read_count, DX
+	CMP token_read_count, 0
+	JNE read_number
 	
-	; MOV DI, DX
-	; MOV CX, AX ; = bytes read count
+	MOV AH, 3Fh
+	MOV CX, paging
+	MOV BX, handle
+	LEA DX, buffer
+	INT 21h
+	MOV DI, DX
 	
-	; XOR BX, BX
-	; CLD
-	
-; loop_current_page:
-	; REPE CMPSB
-	; JE were_equal
-	; CMP CX, 1
-	; JE last_difference
-	
-	; ;incorrect word
-
-; last_difference:
-	; ;reached character
-	; MOV DL, [DI]
-	; CMP DL, ' '
-	; ;JNE not_
-	
-; were_equal:
-
-; finish_comparison:
-	
-	; MOV DX, BX
-	; INC BX
-	; LOOP loop_current_page
+read_number:
+	MOV AH, 02h
+	MOV DL, [DI]
+	INT 21h
+	close_file
 	
 not_found:
 	;write word 1 in file here:
@@ -261,6 +269,7 @@ ENDM
 main:
 	MOV AX, @data
 	MOV DS, AX
+	MOV ES, AX
 	
 	;create_file helper_file_ptr
 	
@@ -290,11 +299,6 @@ not_space:
 	
 	DEC CX
 	JNZ split_words ; LOOP is out of range
-	
-	; MOV DL, strLen
-	; ADD dl, '0'
-	; MOV AH, 02h
-	; INT 21h
 
 exit:
 	MOV AX, 4C00h
