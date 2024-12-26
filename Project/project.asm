@@ -1,14 +1,17 @@
 MASM
 MODEL small
-STACK 128
+.stack 256
 
 .data
 paging EQU 16
 ;text DB "I have something to tell you! Today I am feeling depressed!$", 0
-text DB "blEh "
+text DB "hello asdf BlEh asdf hello "
 text_ptr DD text
 str_len EQU text_ptr - text
 handle DW 0
+helper_handle DW 0
+result_file DB "result.txt", 0
+result_file_ptr DD result_file
 helper_file DB "helper.txt", 0
 helper_file_ptr DD helper_file
 
@@ -18,6 +21,7 @@ word_size DW 0
 token_start_ptr DW ?
 token_read_count DW ?
 
+new_word_str DB " 1", 0Dh, 0Ah
 buffer DW paging DUP(?)
 
 .code
@@ -34,26 +38,6 @@ is_upper MACRO char
 	JG is_not_upper
 	XOR DL, DL ; sets ZF = 1
 is_not_upper:
-ENDM
-
-;sets ZF to 1 if str1 == str2
-str_eq MACRO str1, len1, str2, len2
-	CMP len1, len2
-	JNE str_eq_exit
-	
-	;len1 == len2
-	MOV CX, len1
-	XOR BX, BX
-	
-check_symbol:
-	CMP str1[BX], str2[BX]
-	JNE str_eq_exit
-	INC BX
-	LOOP check_symbol
-	
-	CMP 0, 0
-	
-str_eq_exit:
 ENDM
 
 create_file MACRO file_ptr
@@ -94,7 +78,15 @@ ENDM
 
 get_nth_token MACRO n
 	PUSHA
-	open_file helper_file_ptr, 0 ; changes AX and DX
+	;create_file helper_file_ptr
+	open_file result_file_ptr, 2 ; changes AX and DX
+	
+	;open helper
+	; MOV AL, 1
+	; LDS DX, helper_file_ptr
+	; INT 21h
+	; MOV helper_handle, AX
+	
 	PUSH n
 	
 loop_search_token:
@@ -105,11 +97,12 @@ loop_search_token:
 	LEA DX, buffer
 	INT 21h
 	
+	POP DX
+	
 	CMP AX, 0
 	JE token_not_found
 	
-	MOV DI, DX
-	POP DX
+	LEA DI, buffer
 	
 	CMP DX, 0
 	JE first_token
@@ -127,18 +120,6 @@ count_nl:
 	
 	;DX == 0 => next characters until space are the token
 	MOV token_read_count, CX
-	; CMP CX, 1 ; we ran out of buffer bytes
-	; JNE bytes_remain
-	
-	; MOV AH, 3Fh
-	; MOV CX, paging
-	; LEA DX, buffer
-	; INT 21h
-	; MOV DI, DX
-	
-	; MOV token_read_count, AX
-	
-;bytes_remain:
 	MOV token_start_ptr, DI
 	
 	JMP token_found
@@ -165,19 +146,18 @@ tokenize MACRO string, word_start_i, word_end_i
 	
 	;we have a word from AX to BX - 1
 	MOV SI, word_start_i ; current char index
-	LEA SI, string[SI] ; maybe not needed? - current char pointer
+	LEA SI, string[SI] ; current char pointer
 	
-	MOV word_start, SI ;start ptr
+	MOV word_start, SI
 	
 	MOV DX, word_end_i
 	SUB DX, word_start_i
 	
 	MOV word_size, DX
-	;XOR CX, CX
-	MOV CX, 2
+	XOR CX, CX
 
 search_word:
-	MOV SI, word_start ;start ptr
+	MOV SI, word_start ;start ptr, SI can change in CMPS
 	MOV DX, word_size
 	CMP CX, 0
 	JNE not_first
@@ -185,9 +165,10 @@ search_word:
 
 not_first:
 	get_nth_token CX
-	PUSH CX
+	
 	CMP token_read_count, 0
 	JE not_found
+	PUSH CX
 	
 	; here we have a token with start token_start_ptr and currently read token_read_count bytes from file (includeing token start)
 	CLD
@@ -258,9 +239,21 @@ read_number:
 	MOV DL, [DI]
 	INT 21h
 	close_file
+	JMP tokenize_done
 	
 not_found:
-	;write word 1 in file here:
+	;write "token 1" in file:
+	MOV AH, 40h
+	MOV BX, handle
+	MOV CX, word_size
+	MOV DX, word_start
+	INT 21h
+	
+	MOV AH, 40h
+	MOV CX, 4
+	LEA DX, new_word_str
+	INT 21h
+	close_file
 	
 tokenize_done:
 	POPA
@@ -271,7 +264,7 @@ main:
 	MOV DS, AX
 	MOV ES, AX
 	
-	;create_file helper_file_ptr
+	;create_file result_file_ptr
 	
 	MOV CX, str_len
 	XOR BX, BX
