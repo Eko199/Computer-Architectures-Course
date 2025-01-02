@@ -4,12 +4,12 @@ MODEL small
 
 .data
 paging EQU 16
-text DB "I have something to tell you! Today I am feeling depressed!$$ ! "
-;text DB "!#! "
-text_ptr DD text
-str_len EQU text_ptr - text
+file_size EQU 1000
+text DB 1001 DUP(' ')
 handle DW 0
 ;helper_handle DW 0
+input_file DB "input.txt", 0
+input_file_ptr DD input_file
 result_file DB "result.txt", 0
 result_file_ptr DD result_file
 ;helper_file DB "helper.txt", 0
@@ -56,12 +56,13 @@ open_file MACRO file_ptr, mode
 	MOV handle, AX
 ENDM
 
-; read_file MACRO file_ptr, count
-	; MOV AH, 3Fh
-	; MOV BX, handle
-	; MOV CX, count
-	; INT 21h
-; ENDM
+read_file MACRO count, result
+	MOV AH, 3Fh
+	MOV BX, handle
+	MOV CX, count
+	LEA DX, result
+	INT 21h
+ENDM
 
 write_file MACRO string, len
 	MOV AH, 40h
@@ -85,12 +86,7 @@ get_nth_token MACRO n
 	PUSH n
 	
 loop_search_token:
-	; read
-	MOV AH, 3Fh
-	MOV CX, paging
-	MOV BX, handle
-	LEA DX, buffer
-	INT 21h
+	read_file paging, buffer
 	
 	POP DX
 	
@@ -119,10 +115,7 @@ count_nl:
 	CMP CX, 0 ; we ran out of buffer bytes
 	JNE bytes_remain
 	
-	MOV AH, 3Fh
-	MOV CX, paging
-	LEA DX, buffer
-	INT 21h
+	read_file paging, buffer
 	MOV DI, DX
 	
 	MOV token_read_count, AX
@@ -178,7 +171,7 @@ first:
 	MOV DI, token_start_ptr
 	MOV CX, token_read_count
 	
-	;CX = min(DX, token read count)
+	; CX = min(DX, token read count)
 	CMP CX, DX
 	JLE smaller
 	MOV CX, DX
@@ -193,19 +186,14 @@ smaller:
 	SUB DX, token_read_count
 	PUSH DX
 	
-	;read
-	MOV AH, 3Fh
+	; CX = min(DX, paging)
 	MOV CX, paging
-	
-	;CX = min(DX, paging)
 	CMP CX, DX
 	JLE smaller2
 	MOV CX, DX
 
 smaller2:
-	MOV BX, handle
-	LEA DX, buffer
-	INT 21h
+	read_file CX, buffer
 	MOV DI, DX
 	
 	POP DX ; DX = current word size
@@ -216,11 +204,7 @@ smaller2:
 end_comparison_success_equal:
 	PUSH DX
 	
-	MOV AH, 3Fh
-	MOV CX, 1
-	MOV BX, handle
-	LEA DX, buffer
-	INT 21h
+	read_file 1, buffer
 	MOV DI, DX
 	
 	INC token_read_count
@@ -261,11 +245,7 @@ end_comparison:
 	INT 21h
 	
 no_move_back:
-	MOV AH, 3Fh
-	MOV BX, handle
-	MOV CX, 4 ;number can be at most 1000
-	LEA DX, buffer
-	INT 21h
+	read_file 4, buffer ;number can be at most 1000
 	MOV DI, DX
 	
 	MOV number, 0
@@ -385,9 +365,17 @@ main:
 	MOV DS, AX
 	MOV ES, AX
 	
+	open_file input_file_ptr, 0
+	read_file file_size, text
+	
+	INC AX ; add space at the end
+	PUSH AX
+	
+	close_file
+	
 	;create_file result_file_ptr
 	
-	MOV CX, str_len
+	POP CX
 	XOR BX, BX
 	XOR AX, AX
 	
