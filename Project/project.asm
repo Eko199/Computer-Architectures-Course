@@ -4,12 +4,12 @@ MODEL small
 
 .data
 paging EQU 16
-;text DB "I have something to tell you! Today I am feeling depressed!$", 0
-text DB "HELLO bleh asdf asdf hello "
+text DB "I have something to tell you! Today I am feeling depressed!$$ ! "
+;text DB "!#! "
 text_ptr DD text
 str_len EQU text_ptr - text
 handle DW 0
-helper_handle DW 0
+;helper_handle DW 0
 result_file DB "result.txt", 0
 result_file_ptr DD result_file
 ;helper_file DB "helper.txt", 0
@@ -80,14 +80,7 @@ ENDM
 
 get_nth_token MACRO n
 	PUSHA
-	;create_file helper_file_ptr
 	open_file result_file_ptr, 2 ; changes AX and DX
-	
-	;open helper
-	; MOV AL, 1
-	; LDS DX, helper_file_ptr
-	; INT 21h
-	; MOV helper_handle, AX
 	
 	PUSH n
 	
@@ -154,19 +147,15 @@ token_found:
 	POPA
 ENDM
 
-; word end i is after the last character
-tokenize MACRO string, word_start_i, word_end_i
+;expects SI = token start char index
+;DX = token end index exclusive
+tokenize PROC
 	PUSHA
 	
-	;we have a word from AX to BX - 1
-	MOV SI, word_start_i ; current char index
-	LEA SI, string[SI] ; current char pointer
+	SUB DX, SI ; DX = token length
+	LEA SI, text[SI] ; current char pointer
 	
 	MOV word_start, SI
-	
-	MOV DX, word_end_i
-	SUB DX, word_start_i
-	
 	MOV word_size, DX
 	XOR CX, CX
 
@@ -221,7 +210,7 @@ smaller2:
 	
 	POP DX ; DX = current word size
 	
-	MOV token_read_count, CX
+	MOV token_read_count, AX
 	JMP smaller
 	
 end_comparison_success_equal:
@@ -239,14 +228,21 @@ end_comparison_success_equal:
 	POP DX
 end_comparison_success:
 	INC DI
+	INC SI
 end_comparison:
 	POP CX
 	INC CX
 	
-	DEC DI
-	MOV AL, [DI]
+	MOV AL, [DI-1]
 	CMP AL, ' '
 	JNE search_word
+	
+	;check if word in SI is finished
+	DEC SI ;cmp moves SI after wrong check
+	SUB SI, word_start
+	CMP SI, word_size
+	JNE search_word
+	
 	CMP DX, token_read_count
 	JG search_word
 	
@@ -266,6 +262,7 @@ end_comparison:
 	
 no_move_back:
 	MOV AH, 3Fh
+	MOV BX, handle
 	MOV CX, 4 ;number can be at most 1000
 	LEA DX, buffer
 	INT 21h
@@ -289,22 +286,7 @@ read_number:
 	MOV number, AX
 	
 	INC DI
-	;CMP CX, 1
 	LOOP read_number
-	
-	;PUSH DX
-	
-	; ;read file
-	; MOV AH, 3Fh
-	; MOV CX, paging
-	; LEA DX, buffer
-	; INT 21h
-	; MOV CX, AX
-	
-	; POP DX
-	; INC CX
-	
-	; LOOP read_number
 	
 write_number:
 	INC number
@@ -395,7 +377,8 @@ not_found:
 	
 tokenize_done:
 	POPA
-ENDM
+	RET
+ENDP
 
 main:
 	MOV AX, @data
@@ -412,24 +395,42 @@ split_words:
 	is_upper text[BX]
 	JNE not_upper
 	ADD text[BX], 32
-	JMP not_space
 	
 not_upper:
-	CMP text[BX], ' '
-	JNE not_space
-	CMP BX, AX
-	JE multiple_spaces
+	CMP text[BX], 'a'
+	JL special
+	CMP text[BX], 'z'
+	JG special
 	
-	tokenize text, AX, BX
-
-multiple_spaces:
-	MOV AX, BX
-	INC AX
-not_space:
+letter:
 	INC BX
 	
-	DEC CX
-	JNZ split_words ; LOOP is out of range
+	LOOP split_words
+	JMP exit
+	
+special:
+	CMP BX, AX
+	JE single_char
+	
+token:
+	MOV SI, AX
+	MOV DX, BX
+	CALL tokenize
+	
+single_char:
+	CMP text[BX], ' '
+	JE continue
+	
+	MOV SI, BX
+	MOV DX, BX
+	INC DX
+	CALL tokenize
+
+continue:
+	MOV AX, BX
+	INC AX
+	
+	JMP letter
 
 exit:
 	MOV AX, 4C00h
