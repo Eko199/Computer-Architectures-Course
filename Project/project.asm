@@ -5,15 +5,15 @@ MODEL small
 .data
 paging EQU 16
 ;text DB "I have something to tell you! Today I am feeling depressed!$", 0
-text DB "hello asdf BlEh asdf hello "
+text DB "HELLO bleh asdf asdf hello "
 text_ptr DD text
 str_len EQU text_ptr - text
 handle DW 0
 helper_handle DW 0
 result_file DB "result.txt", 0
 result_file_ptr DD result_file
-helper_file DB "helper.txt", 0
-helper_file_ptr DD helper_file
+;helper_file DB "helper.txt", 0
+;helper_file_ptr DD helper_file
 
 word_start DW 0
 word_size DW 0
@@ -21,8 +21,10 @@ word_size DW 0
 token_start_ptr DW ?
 token_read_count DW ?
 
-new_word_str DB " 1", 0Dh, 0Ah
-buffer DW paging DUP(?)
+new_word_str DB " 1   ", 0Dh, 0Ah
+buffer DB paging DUP(?)
+
+number DW 0
 
 .code
 .386
@@ -65,7 +67,7 @@ write_file MACRO string, len
 	MOV AH, 40h
 	MOV BX, handle
 	MOV CX, len
-	LDS DX, string
+	LEA DX, string
 	
 	INT 21h
 ENDM
@@ -120,6 +122,19 @@ count_nl:
 	
 	;DX == 0 => next characters until space are the token
 	MOV token_read_count, CX
+	
+	CMP CX, 0 ; we ran out of buffer bytes
+	JNE bytes_remain
+	
+	MOV AH, 3Fh
+	MOV CX, paging
+	LEA DX, buffer
+	INT 21h
+	MOV DI, DX
+	
+	MOV token_read_count, AX
+	
+bytes_remain:
 	MOV token_start_ptr, DI
 	
 	JMP token_found
@@ -133,8 +148,7 @@ first_token:
 	JMP token_found
 	
 token_not_found:
-	XOR DX, DX
-	MOV token_read_count, DX
+	MOV token_read_count, 0
 
 token_found:
 	POPA
@@ -160,10 +174,10 @@ search_word:
 	MOV SI, word_start ;start ptr, SI can change in CMPS
 	MOV DX, word_size
 	CMP CX, 0
-	JNE not_first
+	JE first
 	close_file
 
-not_first:
+first:
 	get_nth_token CX
 	
 	CMP token_read_count, 0
@@ -188,13 +202,26 @@ smaller:
 	JE end_comparison_success_equal
 	
 	SUB DX, token_read_count
-	MOV token_read_count, DX
+	PUSH DX
+	
+	;read
 	MOV AH, 3Fh
+	MOV CX, paging
+	
+	;CX = min(DX, paging)
+	CMP CX, DX
+	JLE smaller2
 	MOV CX, DX
+
+smaller2:
 	MOV BX, handle
 	LEA DX, buffer
 	INT 21h
 	MOV DI, DX
+	
+	POP DX ; DX = current word size
+	
+	MOV token_read_count, CX
 	JMP smaller
 	
 end_comparison_success_equal:
@@ -206,6 +233,8 @@ end_comparison_success_equal:
 	LEA DX, buffer
 	INT 21h
 	MOV DI, DX
+	
+	INC token_read_count
 	
 	POP DX
 end_comparison_success:
@@ -222,27 +251,136 @@ end_comparison:
 	JG search_word
 	
 	; token found
-	INC DI
 	SUB token_read_count, DX
-	CMP token_read_count, 0
-	JNE read_number
+	CMP token_read_count, 1 ; i think it can't be zero
+	JE no_move_back ; because we would NEG 0
 	
-	MOV AH, 3Fh
-	MOV CX, paging
+	;move back file pointer
+	MOV AX, 4201h
 	MOV BX, handle
+	MOV CX, 0FFFFh
+	MOV DX, token_read_count
+	DEC DX
+	NEG DX
+	INT 21h
+	
+no_move_back:
+	MOV AH, 3Fh
+	MOV CX, 4 ;number can be at most 1000
 	LEA DX, buffer
 	INT 21h
 	MOV DI, DX
 	
+	MOV number, 0
+	XOR BH, BH
+
 read_number:
-	MOV AH, 02h
-	MOV DL, [DI]
+	MOV BL, [DI]
+	CMP BL, '0'
+	JL write_number
+	CMP BL, '9'
+	JG write_number
+	
+	MOV AX, number
+	MOV DX, 10
+	MUL DX
+	ADD AX, BX
+	SUB AX, '0'
+	MOV number, AX
+	
+	INC DI
+	;CMP CX, 1
+	LOOP read_number
+	
+	;PUSH DX
+	
+	; ;read file
+	; MOV AH, 3Fh
+	; MOV CX, paging
+	; LEA DX, buffer
+	; INT 21h
+	; MOV CX, AX
+	
+	; POP DX
+	; INC CX
+	
+	; LOOP read_number
+	
+write_number:
+	INC number
+	MOV AX, 4201h
+	MOV BX, handle
+	MOV CX, 0FFFFh
+	MOV DX, -4h
 	INT 21h
+	
+	XOR DX, DX
+	MOV AX, number
+	MOV BX, 1000
+	DIV BX
+	
+	MOV number, DX
+	CMP AX, 0
+	JE write_triple_digit
+	
+	ADD AL, '0' ; not ax because ax is a digit
+	MOV buffer, AL
+	write_file buffer, 1
+	
+	CMP number, 100
+	JGE write_triple_digit
+	
+	MOV buffer, '0'
+	write_file buffer, 1
+	
+	CMP number, 100
+	JL write_double_digit_zero
+	
+write_triple_digit:
+	XOR DX, DX
+	MOV AX, number
+	MOV BX, 100
+	DIV BX
+	
+	MOV number, DX
+	CMP AX, 0
+	JE write_double_digit
+	
+	ADD AL, '0'
+	MOV buffer, AL
+	write_file buffer, 1
+	
+write_double_digit_zero:
+	CMP number, 10
+	JGE write_double_digit
+	
+	MOV buffer, '0'
+	write_file buffer, 1
+	JMP write_single_digit
+	
+write_double_digit:
+	XOR DX, DX
+	MOV AX, number
+	MOV BX, 10
+	DIV BX
+	
+	MOV number, DX
+	CMP AX, 0
+	JE write_single_digit
+	
+	ADD AL, '0'
+	MOV buffer, AL
+	write_file buffer, 1
+
+write_single_digit:
+	ADD number, '0'
+	write_file number, 1
+
 	close_file
 	JMP tokenize_done
 	
 not_found:
-	;write "token 1" in file:
+	;write "token 1   \r\n" in file:
 	MOV AH, 40h
 	MOV BX, handle
 	MOV CX, word_size
@@ -250,7 +388,7 @@ not_found:
 	INT 21h
 	
 	MOV AH, 40h
-	MOV CX, 4
+	MOV CX, 7
 	LEA DX, new_word_str
 	INT 21h
 	close_file
