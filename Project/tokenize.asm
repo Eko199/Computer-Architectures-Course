@@ -7,13 +7,16 @@ paging EQU 16
 file_size EQU 1000
 text DB 1001 DUP(' ')
 handle DW 0
-;helper_handle DW 0
-input_file DB "input.txt", 0
+
+input_message DB "Enter file name to open (must be at most 8 characters with max 3 characters extension): $"
+file_name_limit EQU 12
+input_file DB 13 DUP(0)
 input_file_ptr DD input_file
+
+error_message DB 0Dh, 0Ah, "Failed to open file. Check for valid name.$"
+
 result_file DB "result.txt", 0
 result_file_ptr DD result_file
-;helper_file DB "helper.txt", 0
-;helper_file_ptr DD helper_file
 
 word_start DW 0
 word_size DW 0
@@ -53,6 +56,7 @@ open_file MACRO file_ptr, mode
 	MOV AL, mode
 	LDS DX, file_ptr
 	INT 21h
+	JC error_file
 	MOV handle, AX
 ENDM
 
@@ -338,7 +342,6 @@ write_single_digit:
 	ADD number, '0'
 	write_file number, 1
 
-	close_file
 	JMP tokenize_done
 	
 not_found:
@@ -353,9 +356,9 @@ not_found:
 	MOV CX, 7
 	LEA DX, new_word_str
 	INT 21h
-	close_file
 	
 tokenize_done:
+	close_file
 	POPA
 	RET
 ENDP
@@ -365,6 +368,24 @@ main:
 	MOV DS, AX
 	MOV ES, AX
 	
+	MOV AH, 09h
+	LEA DX, input_message
+	INT 21h
+	
+	LEA SI, input_file
+	MOV CX, file_name_limit
+	MOV AH, 01h
+read_input_filename:
+	INT 21h
+	
+	CMP AL, 0Dh
+	JE read_input
+	
+	MOV [SI], AL
+	INC SI
+	LOOP read_input_filename
+	
+read_input:
 	open_file input_file_ptr, 0
 	read_file file_size, text
 	
@@ -419,6 +440,11 @@ continue:
 	INC AX
 	
 	JMP letter
+	
+error_file:
+	MOV AH, 09h
+	LEA DX, error_message
+	INT 21h
 
 exit:
 	MOV AX, 4C00h
@@ -426,4 +452,8 @@ exit:
 
 END main
 
-;Ideas: error handling
+; Ideas: 
+; - error handling
+; - remove trailing spaces
+; - read input in pages (not 1000)
+; - write number with file (not only 4 digits)
