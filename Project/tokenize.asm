@@ -691,6 +691,8 @@ single_char:
 	JE continue
 	CMP text[BX], 0Ah
 	JE continue
+	CMP text[BX], 09h ; tab
+	JE continue
 	
 	MOV SI, BX
 	MOV DX, BX
