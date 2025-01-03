@@ -14,7 +14,9 @@ input_file DB 13 DUP(0)
 input_file_ptr DD input_file
 
 tokens_message DB 0Dh, 0Ah, "Tokens count: $"
-error_message DB 0Dh, 0Ah, "Failed to open file. Check for valid name.$"
+commons_message DB 0Dh, 0Ah, "Enter N (<= 300) to show the N most common tokens (or 0 or enter to exit): $"
+file_error_message DB 0Dh, 0Ah, "Failed to open file. Check for valid name.$"
+n_error_message DB 0Dh, 0Ah, "N is too large! Must be <= 300.$"
 
 result_file DB "result.txt", 0
 result_file_ptr DD result_file
@@ -30,6 +32,11 @@ buffer DB paging DUP(?)
 
 number DW 0
 token_count DW 0
+commons_count DW 0
+max_commons EQU 300
+best_common_count DW 0
+best_common_row DW 0
+commons_row_read DW max_commons DUP(?)
 
 .code
 .386
@@ -85,11 +92,12 @@ close_file MACRO
 	INT 21h
 ENDM
 
-get_nth_token MACRO n
+;expects argument in CX
+get_nth_token PROC
 	PUSHA
-	open_file result_file_ptr, 2 ; changes AX and DX
+	PUSH CX
 	
-	PUSH n
+	open_file result_file_ptr, 2 ; changes AX and DX
 	
 loop_search_token:
 	read_file paging, buffer
@@ -144,7 +152,37 @@ token_not_found:
 
 token_found:
 	POPA
-ENDM
+	RET
+ENDP
+
+read_file_number PROC
+	read_file 4, buffer ;number can be at most 1000
+	MOV DI, DX
+
+	MOV number, 0
+	XOR BH, BH
+
+read_number:
+	MOV BL, [DI]
+	CMP BL, '0'
+	JL read_number_done
+	CMP BL, '9'
+	JG read_number_done
+	
+	MOV AX, number
+	MOV DX, 10
+	MUL DX
+	ADD AX, BX
+	SUB AX, '0'
+	MOV number, AX
+	
+	INC DI
+	LOOP read_number
+	
+read_number_done:
+	RET
+ENDP
+	
 
 ;expects SI = token start char index
 ;DX = token end index exclusive
@@ -167,7 +205,7 @@ search_word:
 	close_file
 
 first:
-	get_nth_token CX
+	CALL get_nth_token
 	
 	CMP token_read_count, 0
 	JE not_found
@@ -252,28 +290,7 @@ end_comparison:
 	INT 21h
 	
 no_move_back:
-	read_file 4, buffer ;number can be at most 1000
-	MOV DI, DX
-	
-	MOV number, 0
-	XOR BH, BH
-
-read_number:
-	MOV BL, [DI]
-	CMP BL, '0'
-	JL write_number
-	CMP BL, '9'
-	JG write_number
-	
-	MOV AX, number
-	MOV DX, 10
-	MUL DX
-	ADD AX, BX
-	SUB AX, '0'
-	MOV number, AX
-	
-	INC DI
-	LOOP read_number
+	CALL read_file_number
 	
 write_number:
 	INC number
@@ -366,6 +383,130 @@ tokenize_done:
 	RET
 ENDP
 
+print_commons MACRO
+	MOV CX, commons_count
+	LEA SI, commons_row_read
+	
+print_next_common:
+	PUSH CX
+	XOR CX, CX
+	MOV best_common_count, 0
+	
+find_next_common:
+	CALL get_nth_token
+	CMP token_read_count, 0
+	JE found_token
+	
+	PUSH CX
+	
+	CLD
+	MOV DI, token_start_ptr
+	MOV CX, token_read_count
+	
+search_number:
+	MOV AL, ' '
+	REPNE SCASB
+	JE found_number
+	
+	read_file paging, buffer
+	MOV CX, AX
+	MOV DI, DX
+	INC CX
+	LOOP search_number
+	
+found_number:
+	;move back file pointer
+	MOV AX, 4201h
+	MOV BX, handle
+	MOV DX, CX
+	NEG DX
+	MOV CX, 0FFFFh
+	INT 21h
+	
+	CALL read_file_number
+	close_file
+	POP CX
+	
+	MOV DX, number
+	
+	MOV AX, CX
+	
+	CMP DX, best_common_count
+	JLE continue_find_next_common
+	
+	POP BX ; first it is commons count then -1, -2, ..., 0
+	PUSH BX
+	MOV CX, commons_count
+	SUB CX, BX ; current common token (first, second, ...)
+	
+	CMP CX, 0
+	JE skip_check
+	
+	LEA DI, commons_row_read
+	REPNE SCASW
+	JE continue_find_next_common
+	
+skip_check:
+	; new best
+	MOV best_common_count, DX
+	MOV best_common_row, AX
+
+continue_find_next_common:
+	MOV CX, AX
+	INC CX
+	JMP find_next_common
+
+found_token:
+	CMP best_common_count, 0
+	JE end_commons
+	
+	MOV CX, best_common_row
+	CALL get_nth_token
+	
+	MOV DI, token_start_ptr
+	MOV CX, token_read_count
+	
+	; print nl
+	MOV AH, 02h
+	MOV DL, 0Dh
+	INT 21h
+	MOV DL, 0Ah
+	INT 21h
+	
+print_token:
+	MOV DL, [DI]
+	CMP DL, ' '
+	JE print_complete
+
+	MOV AH, 02h
+	INT 21h
+	
+	INC DI
+	LOOP print_token
+	
+	; read if ran out of buffer
+	read_file paging, buffer
+	MOV DI, DX
+	MOV CX, AX
+	INC CX
+	LOOP print_token
+	
+print_complete:
+	close_file
+	
+	; save used row
+	MOV DI, SI
+	MOV AX, best_common_row
+	STOSW
+	
+	MOV SI, DI
+	POP CX
+	DEC CX
+	JNZ print_next_common
+	
+end_commons:
+ENDM
+
 main:
 	MOV AX, @data
 	MOV DS, AX
@@ -397,7 +538,7 @@ read_input:
 	
 	close_file
 	
-	;create_file result_file_ptr
+	create_file result_file_ptr
 	
 	POP CX
 	XOR BX, BX
@@ -490,6 +631,48 @@ print_single_digit:
 	ADD DL, '0'
 	INT 21h
 	
+	MOV AH, 09h
+	LEA DX, commons_message
+	INT 21h
+	
+	;read number
+	MOV CX, 3
+	MOV BX, 10
+	
+read_digit:
+	MOV AH, 01h
+	INT 21h
+	
+	CMP AL, '0'
+	JL read_common_number_complete
+	CMP AL, '9'
+	JG read_common_number_complete
+	
+	XOR AH, AH
+	SUB AL, '0'
+	
+	PUSH CX
+	MOV CL, AL
+	
+	MOV AX, commons_count
+	MUL BX
+	MOV commons_count, AX
+	
+	XOR CH, CH
+	ADD commons_count, CX
+	POP CX
+	
+	LOOP read_digit
+	
+read_common_number_complete:
+	CMP commons_count, 0
+	JE exit
+	
+	CMP commons_count, max_commons
+	JG n_too_large
+	
+	print_commons
+
 	JMP exit
 	
 special:
@@ -504,6 +687,10 @@ token:
 single_char:
 	CMP text[BX], ' '
 	JE continue
+	CMP text[BX], 0Dh
+	JE continue
+	CMP text[BX], 0Ah
+	JE continue
 	
 	MOV SI, BX
 	MOV DX, BX
@@ -516,9 +703,15 @@ continue:
 	
 	JMP letter
 	
+n_too_large:
+	MOV AH, 09h
+	LEA DX, n_error_message
+	INT 21h
+	JMP exit
+	
 error_file:
 	MOV AH, 09h
-	LEA DX, error_message
+	LEA DX, file_error_message
 	INT 21h
 
 exit:
@@ -532,3 +725,6 @@ END main
 ; - remove trailing spaces
 ; - read input in pages (not 1000)
 ; - write number with file (not only 4 digits)
+; - make commons work for more than 300
+; - retry after error
+; - prettier commons printing
