@@ -13,6 +13,7 @@ file_name_limit EQU 12
 input_file DB 13 DUP(0)
 input_file_ptr DD input_file
 
+tokens_message DB 0Dh, 0Ah, "Tokens count: $"
 error_message DB 0Dh, 0Ah, "Failed to open file. Check for valid name.$"
 
 result_file DB "result.txt", 0
@@ -28,6 +29,7 @@ new_word_str DB " 1   ", 0Dh, 0Ah
 buffer DB paging DUP(?)
 
 number DW 0
+token_count DW 0
 
 .code
 .386
@@ -148,6 +150,7 @@ ENDM
 ;DX = token end index exclusive
 tokenize PROC
 	PUSHA
+	INC token_count
 	
 	SUB DX, SI ; DX = token length
 	LEA SI, text[SI] ; current char pointer
@@ -415,6 +418,78 @@ letter:
 	INC BX
 	
 	LOOP split_words
+	
+	MOV AH, 09h
+	LEA DX, tokens_message
+	INT 21h
+	
+	XOR DX, DX
+	MOV AX, token_count
+	MOV BX, 1000
+	DIV BX
+	
+	MOV token_count, DX
+	CMP AX, 0
+	JE print_triple_digit
+	
+	ADD AL, '0' ; not ax because ax is a digit
+	MOV DL, AL
+	MOV AH, 02h
+	INT 21h
+	
+	CMP token_count, 100
+	JGE print_triple_digit
+	
+	MOV DL, '0'
+	INT 21h
+	
+	CMP token_count, 100
+	JL print_double_digit_zero
+	
+print_triple_digit:
+	XOR DX, DX
+	MOV AX, token_count
+	MOV BX, 100
+	DIV BX
+	
+	MOV token_count, DX
+	CMP AX, 0
+	JE print_double_digit
+	
+	ADD AL, '0'
+	MOV DL, AL
+	MOV AH, 02h
+	INT 21h
+	
+print_double_digit_zero:
+	CMP token_count, 10
+	JGE print_double_digit
+	
+	MOV DL, '0'
+	INT 21h
+	JMP print_single_digit
+	
+print_double_digit:
+	XOR DX, DX
+	MOV AX, token_count
+	MOV BX, 10
+	DIV BX
+	
+	MOV token_count, DX
+	CMP AX, 0
+	JE print_single_digit
+	
+	ADD AL, '0'
+	MOV DL, AL
+	MOV AH, 02h
+	INT 21h
+
+print_single_digit:
+	MOV AH, 02h
+	MOV DX, token_count
+	ADD DL, '0'
+	INT 21h
+	
 	JMP exit
 	
 special:
